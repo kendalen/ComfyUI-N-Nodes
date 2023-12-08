@@ -386,7 +386,7 @@ class LoadVideo:
         # Estract frames
         file_extension = os.path.splitext(file_path)[1].lower()
 
-        if file_extension == ".mp4" or file_extension == ".webm":
+        if file_extension == ".mp4": # Add this condition to manage webm files as well: or file_extension == ".webm"
             list_files = extract_frames_from_video(file_path, full_temp_output_dir, target_fps=fps)
 
             audio_clip = VideoFileClip(file_path).audio
