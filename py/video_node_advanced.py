@@ -228,7 +228,7 @@ def extract_frames_from_gif(gif_path, output_folder):
     list_files = []
     os.makedirs(output_folder, exist_ok=True)
     
-    gif_frames = imageio.mimread(gif_path) # Add here this to avoid block when processing big gifs: memtest=False
+    gif_frames = imageio.mimread(gif_path, memtest=False)
     
     frame_count = 0
     for frame in gif_frames:
@@ -318,7 +318,7 @@ def create_gif_from_frames(frame_folder, output_gif):
 temp_dir= folder_paths.temp_directory
 
 
-class LoadVideo:
+class LoadVideoAdvanced:
     def __init__(self):
         pass
     
@@ -337,11 +337,12 @@ class LoadVideo:
                             },}
 
 
-    RETURN_TYPES = ("IMAGE","LATENT","STRING","INT","INT",)
-    OUTPUT_IS_LIST = (True, True, False, False,False, )   
-    RETURN_NAMES = ("IMAGES","EMPTY LATENTS","METADATA","WIDTH","HEIGHT")
+    RETURN_TYPES = ("IMAGE","LATENT","STRING","INT","INT","INT","INT",)
+    OUTPUT_IS_LIST = (True, True, False, False,False,False,False, )   
+    RETURN_NAMES = ("IMAGES","EMPTY LATENTS","METADATA","WIDTH","HEIGHT","META_FPS","META_N_FRAMES")
     CATEGORY = "N-Suite/Video"
     FUNCTION = "encode"
+    TYPE="N-Suite"
 
 
     @staticmethod
@@ -386,7 +387,7 @@ class LoadVideo:
         # Estract frames
         file_extension = os.path.splitext(file_path)[1].lower()
 
-        if file_extension == ".mp4": # Add this condition to manage webm files as well: or file_extension == ".webm"
+        if file_extension == ".mp4" or file_extension == ".webm":
             list_files = extract_frames_from_video(file_path, full_temp_output_dir, target_fps=fps)
 
             audio_clip = VideoFileClip(file_path).audio
@@ -395,11 +396,11 @@ class LoadVideo:
                 audio_clip.write_audiofile(os.path.join(temp_output_dir,video.split(".")[0],"audio.mp3"))
             except:
                 print("Could not save audio")
-                pass
-       
+                pass      
         elif file_extension == ".gif":
             list_files = extract_frames_from_gif(file_path, output_dir)
             #create_gif_from_frames(output_dir, output_video2)
+            
         else:
             print("Format not supported. Please provide an MP4 or GIF file.")
 
@@ -534,7 +535,7 @@ class LoadVideo:
            
             return (i_tensor_batches,rebatched_latent,metadata, width, height,)
         
-        return ( [i_tensor],[latent],metadata, width, height,) 
+        return ( [i_tensor],[latent],metadata, width, height,fps,b_size,) 
     
     
 class SaveVideo:
@@ -545,7 +546,6 @@ class SaveVideo:
      
     @classmethod
     def INPUT_TYPES(s):
-        s.video_file_path,s.video_filename = get_output_filename_video("video", videos_output_dir, ".mp4")
         
         try:
             shutil.rmtree(frames_output_dir)
@@ -560,6 +560,7 @@ class SaveVideo:
                      "METADATA": ("STRING",  {"default": "", "forceInput": True}  ),  
                       "SaveVideo": ("BOOLEAN",{"default": False} ),
                       "SaveFrames": ("BOOLEAN",{"default": False} ),
+                      "filename_prefix": ("STRING",{"default": "video"} ),
                       "CompressionLevel":  ("INT", {"default": 2, "min": 0, "max":9, "step": 1}),
                       
                      },
@@ -574,8 +575,10 @@ class SaveVideo:
 
     CATEGORY = "N-Suite/Video"
 
-    def save_video(self, images,METADATA,SaveVideo,SaveFrames, CompressionLevel, prompt=None, extra_pnginfo=None):
+    def save_video(self, images,METADATA,SaveVideo,SaveFrames,filename_prefix, CompressionLevel, prompt=None, extra_pnginfo=None):
  
+        self.video_file_path,self.video_filename = get_output_filename_video(filename_prefix, videos_output_dir, ".mp4")
+
         fps = METADATA[0]
         frame_number = METADATA[1]
         video_filename_original = METADATA[2]
@@ -650,32 +653,40 @@ class LoadFramesFromFolder:
     def INPUT_TYPES(s):
         return {"required": { "folder":("STRING",  {"default": ""} ),
                              "fps":("INT", {"default": 30})
-                            
-                             
-                             
                              }}
     
 
-    RETURN_TYPES = ("IMAGE","STRING",)
-    RETURN_NAMES = ("IMAGES","METADATA")
+    RETURN_TYPES = ("IMAGE","STRING","INT","INT","INT","STRING","STRING",)
+    RETURN_NAMES = ("IMAGES","METADATA","MAX WIDTH","MAX HEIGHT","FRAME COUNT","PATH","IMAGE LIST")
     FUNCTION = "load_images"
-    OUTPUT_IS_LIST = (True,False,)
+    OUTPUT_IS_LIST = (True,False,False,False,False,False,False,)
     CATEGORY = "N-Suite/Video"
 
     def load_images(self, folder,fps):
         image_list = []
+        image_names = []
+        max_width = 0
+        max_height = 0
+        frame_count = 0
         METADATA = [fps, len(os.listdir(folder)),"load"]
         
         images = [os.path.join(folder, filename) for filename in os.listdir(folder) if filename.endswith(".png") or filename.endswith(".jpg")]
         images.sort(key=lambda f: int(''.join(filter(str.isdigit, f))))
         
-        for image in images:
-        
-            image_list.append(image_preprocessing(Image.open(image)))
+        for image_path in images:
+            #get image name
+            image_names.append(image_path.split("/")[-1])
+            image = Image.open(image_path)
+            width, height = image.size
+            max_width = max(max_width, width)
+            max_height = max(max_height, height)
+            image_list.append((image_preprocessing(image)))
+            frame_count += 1
+    
+        image_names_final='\n'.join(image_names)
+        print (f"Details: {frame_count} frames, {max_width}x{max_height}")
 
-        #i_tensor = torch.stack(image_list, dim=0)
-        return (image_list,METADATA,)
-
+        return (image_list,METADATA, max_width, max_height,frame_count,folder,image_names_final,)
     
 class SetMetadata:
     def __init__(self):
@@ -708,16 +719,16 @@ class SetMetadata:
 # A dictionary that contains all nodes you want to export with their names
 # NOTE: names should be globally unique
 NODE_CLASS_MAPPINGS = {
-    "LoadVideo": LoadVideo,
-    "SaveVideo":SaveVideo,
-    "LoadFramesFromFolder": LoadFramesFromFolder,
-    "SetMetadataForSaveVideo": SetMetadata
+    "LoadVideo [n-suite]": LoadVideoAdvanced,
+    "SaveVideo [n-suite]":SaveVideo,
+    "LoadFramesFromFolder [n-suite]": LoadFramesFromFolder,
+    "SetMetadataForSaveVideo [n-suite]": SetMetadata
 }
 
 # A dictionary that contains the friendly/humanly readable titles for the nodes
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "Video": "LoadVideo",
-    "Video": "SaveVideo",
-    "Video": "LoadFramesFromFolder",
-    "Video": "SetMetadataForSaveVideo"
+    "LoadVideo [n-suite]": "LoadVideo [🅝-🅢🅤🅘🅣🅔]",
+    "SaveVideo [n-suite]": "SaveVideo [🅝-🅢🅤🅘🅣🅔]",
+    "LoadFramesFromFolder [n-suite]": "LoadFramesFromFolder [🅝-🅢🅤🅘🅣🅔]",
+    "SetMetadataForSaveVideo [n-suite]": "SetMetadataForSaveVideo [🅝-🅢🅤🅘🅣🅔]"
 }
